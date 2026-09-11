@@ -1,8 +1,25 @@
 import time
 import math
 import json
+import sys
+import threading
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
+
+_backend_dir = Path(__file__).resolve().parent
+_repo_root = _backend_dir.parent
+for p in [str(_repo_root), str(_backend_dir)]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+try:
+    from backend.app.services.telemetry_simulator import TelemetrySimulator
+except ImportError:
+    try:
+        from app.services.telemetry_simulator import TelemetrySimulator
+    except ImportError:
+        TelemetrySimulator = None
 
 from astra_engine import astra_engine
 from yolo_engine import yolo_engine
@@ -154,7 +171,7 @@ SCENARIO_ROTATION_ORDER = [
 
 class SimulationEngine:
     def __init__(self):
-        self.state = "STOPPED"
+        self.state = "RUNNING"
         self.speed = 1.0
         self.active_scenario_key = "AUTHORIZED_DRONE"
         self.step_index = 0
@@ -172,15 +189,23 @@ class SimulationEngine:
         self.lost_link_resumed = False
         self.lost_link_silence_count = 0
         self.multi_tracks_state = {}
+        self.telemetry_simulator = TelemetrySimulator() if TelemetrySimulator else None
+        self._step_lock = threading.Lock()
+        self._ensure_temp_red_zone()
 
     def reset_simulation(self, keep_running=False):
-        self.state = "RUNNING" if keep_running else "STOPPED"
-        self.step_index = 0
-        self.reports_sent_for_scenario = 0
-        self.lost_link_resumed = False
-        self.lost_link_silence_count = 0
+        with self._step_lock:
+            self.state = "RUNNING" if keep_running else "STOPPED"
+            self.step_index = 0
+            self.reports_sent_for_scenario = 0
+            self.lost_link_resumed = False
+            self.lost_link_silence_count = 0
+            self.multi_tracks_state = {}
+            self.active_scenario_key = "AUTHORIZED_DRONE"
 
-        track_manager.clear_demo_tracks()
+            track_manager.clear_demo_tracks()
+            if self.telemetry_simulator and self.state == "RUNNING":
+                self.telemetry_simulator.randomize_airspace()
 
         try:
             conn = get_db()
@@ -188,11 +213,6 @@ class SimulationEngine:
             cursor.execute("""
                 DELETE FROM restricted_zones
                 WHERE zone_id LIKE 'ZONE-TEMP-DEMO%'
-            """)
-            cursor.execute("""
-                UPDATE restricted_zones
-                SET active = 0
-                WHERE zone_id LIKE 'ZONE-TEMP%' OR zone_id LIKE 'TEMP-RED%'
             """)
             cursor.execute("""
                 UPDATE alerts
@@ -204,6 +224,9 @@ class SimulationEngine:
         except Exception as e:
             print(f"[Sim Reset DB Error] {e}")
 
+        # Always restore default active Temporary Red Zone on the map
+        self._ensure_temp_red_zone()
+
         try:
             audit_service.log_event(
                 operator_id="SIMULATOR",
@@ -213,7 +236,7 @@ class SimulationEngine:
                 resource_id=self.active_scenario_key,
                 result="RESET",
                 reason_code="BASELINE_RESTORED",
-                details="Simulation reset to clean baseline. Demo tracks and temporary zones cleared."
+                details="Simulation reset to clean baseline. Active tactical temporary red zone restored."
             )
         except Exception:
             pass
@@ -222,29 +245,53 @@ class SimulationEngine:
             {
                 "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
                 "type": "SIMULATION_RESET",
-                "message": "Simulator reset to clean baseline. Ready for scenario execution."
+                "message": "Simulator reset to clean baseline. Tactical temp red zone active on map."
             }
         ]
 
-    def _ensure_temp_red_zone(self):
+    def _ensure_temp_red_zone(self, duration_seconds=2700, include_demo=False):
         try:
             conn = get_db()
             cursor = conn.cursor()
-            zone_id = "ZONE-TEMP-DEMO"
-            exp_time = datetime.now(timezone.utc) + timedelta(seconds=60)
+            exp_time = datetime.now(timezone.utc) + timedelta(seconds=duration_seconds)
             expires_at = exp_time.strftime("%Y-%m-%d %H:%M:%S")
-            poly = [
-                [13.060, 80.290],
-                [13.076, 80.290],
-                [13.076, 80.306],
-                [13.060, 80.306]
+
+            # 1. Active Tactical VIP Security Temporary Red Zone on Chennai coastal defense sector
+            poly_tactical = [
+                [13.060, 80.282],
+                [13.076, 80.282],
+                [13.076, 80.300],
+                [13.060, 80.300]
             ]
             cursor.execute("""
-                INSERT OR REPLACE INTO restricted_zones 
+                INSERT INTO restricted_zones 
                 (zone_id, name, zone_type, min_altitude_m, max_altitude_m, polygon_coords, severity, description, expires_at, created_by, active, reason)
-                VALUES (?, 'Tactical Bomb Squad Perimeter (Demo)', 'TEMPORARY_RED', 0.0, 400.0, ?, 'CRITICAL',
-                        'Law enforcement temporary exclusion zone', ?, 'SYSTEM_DEMO', 1, 'VIP Tactical Cordon')
-            """, (zone_id, json.dumps(poly), expires_at))
+                VALUES ('ZONE-TEMP-TACTICAL-01', 'Tactical VIP Security & Bomb Squad Cordon', 'TEMPORARY_RED', 0.0, 400.0, ?, 'CRITICAL',
+                        'Emergency Coastal Tactical Cordon - Active Counter-UAS Perimeter', ?, 'TACTICAL_COMMAND', 1, 'VIP Movement & Anti-Sabotage Sweep')
+                ON CONFLICT(zone_id) DO UPDATE SET
+                    active = 1,
+                    expires_at = excluded.expires_at,
+                    polygon_coords = excluded.polygon_coords,
+                    name = excluded.name,
+                    reason = excluded.reason
+            """, (json.dumps(poly_tactical), expires_at))
+
+            # 2. Demo zone for automated test scenarios (only when explicitly requested)
+            if include_demo:
+                demo_exp = (datetime.now(timezone.utc) + timedelta(seconds=120)).strftime("%Y-%m-%d %H:%M:%S")
+                poly_demo = [
+                    [13.060, 80.290],
+                    [13.076, 80.290],
+                    [13.076, 80.306],
+                    [13.060, 80.306]
+                ]
+                cursor.execute("""
+                    INSERT OR REPLACE INTO restricted_zones 
+                    (zone_id, name, zone_type, min_altitude_m, max_altitude_m, polygon_coords, severity, description, expires_at, created_by, active, reason)
+                    VALUES ('ZONE-TEMP-DEMO', 'Tactical Bomb Squad Perimeter (Demo)', 'TEMPORARY_RED', 0.0, 400.0, ?, 'CRITICAL',
+                            'Law enforcement temporary exclusion zone', ?, 'SYSTEM_DEMO', 1, 'VIP Tactical Cordon')
+                """, (json.dumps(poly_demo), demo_exp))
+
             conn.commit()
             conn.close()
 
@@ -253,10 +300,10 @@ class SimulationEngine:
                 operator_role="SYSTEM",
                 action="TEMP_ZONE_CREATED",
                 resource_type="GEOFENCE",
-                resource_id=zone_id,
+                resource_id="ZONE-TEMP-TACTICAL-01",
                 result="ACTIVE",
                 reason_code="TACTICAL_AIRSPACE_RESTRICTION",
-                details="Temporary red zone ZONE-TEMP-DEMO activated (60s duration)."
+                details=f"Temporary red zone ZONE-TEMP-TACTICAL-01 placed on map (Expires: {expires_at})."
             )
         except Exception as e:
             print(f"[Temp Red Zone Setup Error] {e}")
@@ -303,7 +350,7 @@ class SimulationEngine:
         track_manager.clear_demo_tracks()
 
         if self.active_scenario_key == "TEMP_RED_ZONE_VIOLATION":
-            self._ensure_temp_red_zone()
+            self._ensure_temp_red_zone(include_demo=True)
             scenario = SCENARIOS[self.active_scenario_key]
             self.current_lat = scenario["start_lat"]
             self.current_lon = scenario["start_lon"]
@@ -335,7 +382,24 @@ class SimulationEngine:
             pass
 
         self.add_event("SIMULATION_STARTED", f"Running Track-A scenario: {SCENARIOS.get(self.active_scenario_key, {}).get('name', self.active_scenario_key)}")
-        self._send_telemetry_report()
+        if self.active_scenario_key == "MULTI_OBJECT":
+            for tid, obj in self.multi_tracks_state.items():
+                rep = {
+                    "source": "SIMULATOR",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "track_id": obj["track_id"],
+                    "uas_id": obj["uas_id"],
+                    "object_type": obj["object_type"],
+                    "latitude": round(obj["lat"], 6),
+                    "longitude": round(obj["lon"], 6),
+                    "altitude_m": round(obj["alt"], 1),
+                    "speed_mps": round(obj["speed"], 1),
+                    "heading_deg": round(obj["heading"], 1),
+                    "scenario": "MULTI_OBJECT"
+                }
+                ingestion_service.validate_and_ingest(rep)
+        else:
+            self._send_telemetry_report()
         return self.get_scenario_state()
 
     def pause(self):
@@ -373,7 +437,8 @@ class SimulationEngine:
             pass
 
     def stop(self):
-        self.state = "STOPPED"
+        with self._step_lock:
+            self.state = "STOPPED"
         self.add_event("SIMULATION_STOPPED", "Simulation execution halted. Telemetry transmission stopped.")
         try:
             audit_service.log_event(
@@ -415,10 +480,53 @@ class SimulationEngine:
         self._send_telemetry_report()
 
     def update_step(self, dt=0.8):
+        if not self._step_lock.acquire(blocking=False):
+            return self.get_snapshot()
+        try:
+            return self._update_step_internal(dt)
+        finally:
+            self._step_lock.release()
+
+    def _update_step_internal(self, dt=0.8):
         track_manager.check_heartbeats()
 
         if self.state != "RUNNING":
             return self.get_snapshot()
+
+        effective_dt = dt * self.speed
+        self.step_index += 1
+
+        # 1. Step Levin's TelemetrySimulator for continuous multi-drone airspace (8-15 concurrent actors)
+        if self.telemetry_simulator:
+            try:
+                actor_reports = self.telemetry_simulator.step()
+                for rep in actor_reports:
+                    if self.state != "RUNNING":
+                        break
+                    if self.active_scenario_key and self.active_scenario_key in SCENARIOS:
+                        scenario_tid = SCENARIOS[self.active_scenario_key]["track_id"]
+                        if rep.get("track_id") == scenario_tid:
+                            continue
+
+                    obj_type = rep.get("actor_type", "drone").upper()
+                    auth_status = rep.get("authorization_status", "UNREGISTERED")
+                    ingest_rep = {
+                        "source": rep.get("source", "SIMULATED_REMOTE_ID"),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "track_id": rep["track_id"],
+                        "uas_id": rep.get("remote_id") or rep["track_id"],
+                        "object_type": obj_type,
+                        "latitude": round(rep["latitude"], 6),
+                        "longitude": round(rep["longitude"], 6),
+                        "altitude_m": round(rep["altitude_m"], 1),
+                        "speed_mps": round(rep.get("velocity_mps", 10.0), 1),
+                        "heading_deg": round(rep.get("heading_deg", 0.0), 1),
+                        "authorization": auth_status,
+                        "scenario": "AMBIENT_AIRSPACE"
+                    }
+                    ingestion_service.validate_and_ingest(ingest_rep)
+            except Exception as e:
+                print(f"[TelemetrySimulator Step Error] {e}")
 
         scenario = SCENARIOS.get(self.active_scenario_key, SCENARIOS["AUTHORIZED_DRONE"])
 
@@ -430,9 +538,6 @@ class SimulationEngine:
                 next_key = self.scenario_cycle[0]
             self.start(next_key, self.speed)
             return self.get_snapshot()
-
-        effective_dt = dt * self.speed
-        self.step_index += 1
 
         if self.active_scenario_key == "LOST_LINK" and not self.lost_link_resumed:
             max_r = scenario.get("max_reports", 4)
@@ -467,16 +572,51 @@ class SimulationEngine:
                 ingestion_service.validate_and_ingest(report)
             return self.get_snapshot()
 
+        # Kinematic updates based on scenario:
+        if self.active_scenario_key == "UNREGISTERED_DRONE":
+            # Dynamic erratic moves: yaw wander, banking turns, throttle surges, altitude bobbing
+            turn_deg_s = math.sin(self.step_index * 0.35) * 6.5 + math.cos(self.step_index * 0.12) * 3.0 + random.uniform(-1.5, 1.5)
+            self.current_heading = (self.current_heading + turn_deg_s * effective_dt) % 360.0
+            
+            # Speed fluctuations between 9 and 21.5 m/s
+            speed_surge = math.sin(self.step_index * 0.28) * 4.5 + random.uniform(-1.0, 1.0)
+            self.current_speed = max(8.5, min(22.0, scenario.get("speed_mps", 15.0) + speed_surge))
+            
+            # Altitude bobbing between 35m and 115m
+            self.current_alt = max(25.0, 65.0 + math.sin(self.step_index * 0.2) * 35.0 + math.cos(self.step_index * 0.07) * 15.0)
+            
+            # Soft-bounce containment to keep rogue drone actively maneuvering within Chennai coastal sector
+            if self.current_lat < 13.030 or self.current_lat > 13.110 or self.current_lon < 80.260 or self.current_lon > 80.325:
+                to_center_rad = math.atan2(80.290 - self.current_lon, 13.070 - self.current_lat)
+                self.current_heading = math.degrees(to_center_rad) % 360.0
+
+        elif self.active_scenario_key == "ALTITUDE_VIOLATION":
+            # Erratic vertical surges breaching the 80m approved ceiling up to 295m AGL
+            self.current_alt = max(145.0, 220.0 + math.sin(self.step_index * 0.24) * 65.0 + math.cos(self.step_index * 0.09) * 20.0 + random.uniform(-2.0, 2.0))
+            
+            # Yaw wander with gentle banking turns
+            turn_deg_s = math.sin(self.step_index * 0.15) * 3.5 + random.uniform(-0.8, 0.8)
+            self.current_heading = (self.current_heading + turn_deg_s * effective_dt) % 360.0
+            
+            # Cruising speed variation
+            self.current_speed = max(10.0, min(19.0, scenario.get("speed_mps", 14.0) + math.sin(self.step_index * 0.18) * 2.5))
+            
+            # Soft-bounce containment
+            if self.current_lat < 13.040 or self.current_lat > 13.125 or self.current_lon < 80.270 or self.current_lon > 80.335:
+                to_center_rad = math.atan2(80.305 - self.current_lon, 13.085 - self.current_lat)
+                self.current_heading = math.degrees(to_center_rad) % 360.0
+
+        else:
+            alt_variation = math.sin(self.step_index * 0.2) * 1.5
+            self.current_alt = max(10.0, scenario["altitude_m"] + alt_variation)
+
         heading_rad = math.radians(self.current_heading)
         dist_m = self.current_speed * effective_dt
         meters_per_deg_lat = 111000.0
-        meters_per_deg_lon = 111000.0 * math.cos(math.radians(self.current_lat))
+        meters_per_deg_lon = 111000.0 * max(0.2, math.cos(math.radians(self.current_lat)))
 
         self.current_lat += (dist_m * math.cos(heading_rad) / meters_per_deg_lat)
         self.current_lon += (dist_m * math.sin(heading_rad) / meters_per_deg_lon)
-
-        alt_variation = math.sin(self.step_index * 0.2) * 1.5
-        self.current_alt = max(10.0, scenario["altitude_m"] + alt_variation)
 
         self._send_telemetry_report()
         return self.get_snapshot()
@@ -527,14 +667,20 @@ class SimulationEngine:
     def get_snapshot(self) -> Dict[str, Any]:
         scenario = SCENARIOS.get(self.active_scenario_key, SCENARIOS["AUTHORIZED_DRONE"])
         track_id = scenario["track_id"]
+        all_active_tracks = [t for t in track_manager.active_tracks.values() if t.get("status") != "PURGED"]
+
         active_t = track_manager.active_tracks.get(track_id, {})
+        if not active_t and all_active_tracks:
+            drone_candidates = [t for t in all_active_tracks if t.get("object_type") == "DRONE"]
+            active_t = drone_candidates[0] if drone_candidates else all_active_tracks[0]
+            track_id = active_t.get("track_id", track_id)
 
         obj_type = active_t.get("object_type", scenario.get("object_type", "DRONE"))
         intel = self._synthesize_rf_intel(scenario, obj_type, active_t)
 
         snapshot_track = {
             "track_id": track_id,
-            "uas_id": scenario.get("uas_id", track_id),
+            "uas_id": active_t.get("uas_id", scenario.get("uas_id", track_id)),
             "object_type": obj_type,
             "radar_confidence": active_t.get("radar_confidence", 0.96),
             "camera_confidence": active_t.get("camera_confidence", 0.0),
@@ -545,7 +691,7 @@ class SimulationEngine:
             "altitude_m": active_t.get("altitude_m", self.current_alt),
             "speed_mps": active_t.get("speed_mps", self.current_speed),
             "heading_deg": active_t.get("heading_deg", self.current_heading),
-            "range_m": round(math.sqrt((self.current_lat - 13.065)**2 + (self.current_lon - 80.295)**2) * 111000, 1),
+            "range_m": round(math.sqrt((active_t.get("latitude", self.current_lat) - 13.065)**2 + (active_t.get("longitude", self.current_lon) - 80.295)**2) * 111000, 1),
             "status": active_t.get("status", "TRACKING"),
             "authorization": active_t.get("authorization", {}),
             "geofence": active_t.get("geofence", {}),

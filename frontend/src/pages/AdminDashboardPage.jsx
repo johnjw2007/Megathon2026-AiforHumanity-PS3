@@ -13,6 +13,7 @@ import IncidentsEvidenceView from '../components/IncidentsEvidenceView';
 import AITransparencyView from '../components/AITransparencyView';
 import AuditLogView from '../components/AuditLogView';
 import PermissionsRegistryView from '../components/PermissionsRegistryView';
+import DroneRegistryView from '../components/DroneRegistryView';
 import RestrictedZonesView from '../components/RestrictedZonesView';
 import DemoWalkthroughModal from '../components/DemoWalkthroughModal';
 import TacticalRadarModal from '../components/TacticalRadarModal';
@@ -698,13 +699,10 @@ export default function AdminDashboardPage() {
           )}
 
           {currentTab === 'registry' && (
-            <PermissionsRegistryView
+            <DroneRegistryView
               drones={drones}
-              permissions={permissions}
-              zones={zones}
-              onApprovePermission={handleApprovePermission}
-              onRejectPermission={handleRejectPermission}
-              onRequestPermission={handleRequestPermission}
+              onRegisterDrone={handleRegisterDrone}
+              onRefreshDrones={fetchAllData}
             />
           )}
 

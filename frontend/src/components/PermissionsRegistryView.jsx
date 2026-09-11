@@ -343,52 +343,6 @@ export default function PermissionsRegistryView({
         </div>
       </div>
 
-      {/* Drone Hardware Registry */}
-      <div className="bg-aerodark-850 border border-aerodark-700 rounded-xl p-5 space-y-3.5 shadow-sm">
-        <div className="font-semibold text-slate-200 text-xs uppercase tracking-wider flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <Plane className="w-4 h-4 text-blue-400" />
-            <span>Active Civil Drone Hardware Registry</span>
-          </div>
-          <span className="text-slate-400 font-mono text-[11px] font-normal">
-            {drones?.length || 0} Registered Drones
-          </span>
-        </div>
-
-        <div className="overflow-x-auto rounded-lg border border-aerodark-700/60">
-          <table className="w-full text-left font-mono text-xs">
-            <thead className="text-slate-400 border-b border-aerodark-700 bg-aerodark-900 font-sans">
-              <tr>
-                <th className="px-3.5 py-2.5 font-medium text-[11px] tracking-wider uppercase">Drone ID</th>
-                <th className="px-3.5 py-2.5 font-medium text-[11px] tracking-wider uppercase">DGCA UIN</th>
-                <th className="px-3.5 py-2.5 font-medium text-[11px] tracking-wider uppercase">Model Name</th>
-                <th className="px-3.5 py-2.5 font-medium text-[11px] tracking-wider uppercase">Type</th>
-                <th className="px-3.5 py-2.5 font-medium text-[11px] tracking-wider uppercase">Weight Class</th>
-                <th className="px-3.5 py-2.5 font-medium text-[11px] tracking-wider uppercase">Owner / Operator</th>
-                <th className="px-3.5 py-2.5 font-medium text-[11px] tracking-wider uppercase">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-aerodark-700/40 text-slate-300">
-              {drones?.map((d) => (
-                <tr key={d.drone_id} className="hover:bg-aerodark-800/50 transition-colors">
-                  <td className="px-3.5 py-2.5 font-bold text-blue-400">{d.drone_id}</td>
-                  <td className="px-3.5 py-2.5 font-semibold text-slate-200">{d.uin_number}</td>
-                  <td className="px-3.5 py-2.5 font-sans">{d.model_name}</td>
-                  <td className="px-3.5 py-2.5 font-sans">{d.drone_type}</td>
-                  <td className="px-3.5 py-2.5 font-sans">{d.weight_category}</td>
-                  <td className="px-3.5 py-2.5 font-sans">{d.owner_name}</td>
-                  <td className="px-3.5 py-2.5">
-                    <span className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 px-2 py-0.5 rounded-md font-sans font-medium text-[10px]">
-                      {d.registration_status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
       {/* Modal: Grant Flight Authorization / Submit Request */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn font-sans">

@@ -1,6 +1,73 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { Target, Compass, Eye, Layers, Navigation, AlertTriangle, ShieldAlert, PlusCircle, Check, X, Clock } from 'lucide-react';
+import { Target, Compass, Eye, Layers, Navigation, AlertTriangle, ShieldAlert, PlusCircle, Check, X, Clock, Brain, Sparkles, RotateCcw } from 'lucide-react';
+
+
+const ZONE_PRESETS = [
+  {
+    id: 'NAVAL',
+    label: 'INS Adyar Defense Sector',
+    name: 'Tactical VIP Security & Bomb Squad Cordon',
+    reason: 'VIP Maritime Escort & Counter-Sabotage Sweep',
+    durationMinutes: 45,
+    minAlt: 0,
+    maxAlt: 400,
+    coords: [
+      [13.060, 80.282],
+      [13.076, 80.282],
+      [13.076, 80.300],
+      [13.060, 80.300]
+    ]
+  },
+  {
+    id: 'MARINA',
+    label: 'Marina Coastal Strip',
+    name: 'Marina Beach Rapid Incident Exclusion',
+    reason: 'Civilian Coastal Crowd Protection Cordon',
+    durationMinutes: 30,
+    minAlt: 0,
+    maxAlt: 150,
+    coords: [
+      [13.040, 80.278],
+      [13.056, 80.278],
+      [13.056, 80.294],
+      [13.040, 80.294]
+    ]
+  },
+  {
+    id: 'PORT',
+    label: 'Chennai Port Logistics',
+    name: 'Chennai Port Security Rapid Exclusion',
+    reason: 'Vessel Hazardous Cargo Loading & Harbor Sweep',
+    durationMinutes: 60,
+    minAlt: 0,
+    maxAlt: 250,
+    coords: [
+      [13.088, 80.295],
+      [13.110, 80.295],
+      [13.110, 80.320],
+      [13.088, 80.320]
+    ]
+  },
+  {
+    id: 'TARGET',
+    label: 'Around Current Drone Target (400m)',
+    name: 'Tactical Drone Intercept Perimeter',
+    reason: 'Containment of rogue or unidentified UAV',
+    durationMinutes: 30,
+    minAlt: 0,
+    maxAlt: 300
+  },
+  {
+    id: 'DRAW',
+    label: 'Click-to-Draw on Map',
+    name: 'Custom Tactical Red Zone',
+    reason: 'Operator Defined Tactical Boundary',
+    durationMinutes: 30,
+    minAlt: 0,
+    maxAlt: 200
+  }
+];
 
 export default function LiveMap({
   track,
@@ -21,16 +88,19 @@ export default function LiveMap({
   const [isOffScreen, setIsOffScreen] = useState(false);
   const [incomingNotice, setIncomingNotice] = useState(null);
 
-  // Drawing Temporary Red Zone State
+  // Drawing & Customizable Temporary Red Zone State
   const [isDrawing, setIsDrawing] = useState(false);
-  const [drawnPoints, setDrawnPoints] = useState([]);
+  const [drawnPoints, setDrawnPoints] = useState(ZONE_PRESETS[0].coords);
   const [showZoneModal, setShowZoneModal] = useState(false);
-  const [zoneName, setZoneName] = useState('Tactical Temporary Sector 01');
-  const [zoneReason, setZoneReason] = useState('VIP Coastal Convoy Security Perimeter');
-  const [zoneDuration, setZoneDuration] = useState(60); // Default 60 seconds for live demo!
+  const [selectedPresetId, setSelectedPresetId] = useState('NAVAL');
+  const [zoneName, setZoneName] = useState(ZONE_PRESETS[0].name);
+  const [zoneReason, setZoneReason] = useState(ZONE_PRESETS[0].reason);
+  const [durationMinutesInput, setDurationMinutesInput] = useState(45);
+  const [zoneDuration, setZoneDuration] = useState(2700); // Default 45 minutes
   const [zoneMinAlt, setZoneMinAlt] = useState(0);
-  const [zoneMaxAlt, setZoneMaxAlt] = useState(120);
+  const [zoneMaxAlt, setZoneMaxAlt] = useState(400);
   const [isSubmittingZone, setIsSubmittingZone] = useState(false);
+  const [zoneActionNotice, setZoneActionNotice] = useState(null);
 
   // Timer tick for zone expiry countdowns
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -226,23 +296,112 @@ export default function LiveMap({
     setShowZoneModal(true);
   };
 
+  // Select Preset or Target
+  const handleSelectPreset = (presetId) => {
+    setSelectedPresetId(presetId);
+    const preset = ZONE_PRESETS.find(p => p.id === presetId);
+    if (!preset) return;
+
+    setZoneName(preset.name);
+    setZoneReason(preset.reason);
+    setDurationMinutesInput(preset.durationMinutes);
+    setZoneDuration(preset.durationMinutes * 60);
+    setZoneMinAlt(preset.minAlt);
+    setZoneMaxAlt(preset.maxAlt);
+
+    if (preset.coords) {
+      setDrawnPoints(preset.coords);
+      setIsDrawing(false);
+    } else if (presetId === 'TARGET') {
+      const tLat = activeSelectedTrack?.latitude || track?.latitude || 13.070;
+      const tLon = activeSelectedTrack?.longitude || track?.longitude || 80.290;
+      const dLat = 400 / 111000;
+      const dLon = 400 / (111000 * Math.max(0.2, Math.cos(tLat * Math.PI / 180)));
+      setDrawnPoints([
+        [roundTo(tLat - dLat, 6), roundTo(tLon - dLon, 6)],
+        [roundTo(tLat + dLat, 6), roundTo(tLon - dLon, 6)],
+        [roundTo(tLat + dLat, 6), roundTo(tLon + dLon, 6)],
+        [roundTo(tLat - dLat, 6), roundTo(tLon + dLon, 6)]
+      ]);
+      setIsDrawing(false);
+    } else if (presetId === 'DRAW') {
+      setShowZoneModal(false);
+      startDrawing();
+    }
+  };
+
+  // Extend active zone
+  const handleExtendZone = async (zoneId, additionalSeconds = 900) => {
+    try {
+      const token = localStorage.getItem('aeroguard_token') || 'aerosec-officer-token';
+      const res = await fetch(`/api/zones/${encodeURIComponent(zoneId)}/extend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ additional_seconds: additionalSeconds })
+      });
+      const d = await res.json();
+      if (d.success) {
+        setZoneActionNotice(`Extended zone '${zoneId}' by ${Math.round(additionalSeconds/60)} minutes.`);
+        setTimeout(() => setZoneActionNotice(null), 4000);
+        if (onZoneCreated) onZoneCreated();
+      }
+    } catch (err) {
+      console.error('Zone extension error:', err);
+    }
+  };
+
+  // Revoke active zone
+  const handleRevokeZone = async (zoneId) => {
+    if (!window.confirm(`Are you sure you want to revoke and deactivate temporary restricted zone '${zoneId}'?`)) return;
+    try {
+      const token = localStorage.getItem('aeroguard_token') || 'aerosec-officer-token';
+      const res = await fetch(`/api/zones/${encodeURIComponent(zoneId)}/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+      });
+      const d = await res.json();
+      if (d.success) {
+        setZoneActionNotice(`Revoked/deactivated zone '${zoneId}'.`);
+        setTimeout(() => setZoneActionNotice(null), 4000);
+        if (onZoneCreated) onZoneCreated();
+      }
+    } catch (err) {
+      console.error('Zone revoke error:', err);
+    }
+  };
+
+  // Expose extend & revoke to window for Leaflet HTML popups
+  useEffect(() => {
+    window._aeroExtendZone = (zid) => handleExtendZone(zid, 900);
+    window._aeroRevokeZone = (zid) => handleRevokeZone(zid);
+    return () => {
+      delete window._aeroExtendZone;
+      delete window._aeroRevokeZone;
+    };
+  }, [onZoneCreated]);
+
   const handleSaveTemporaryZone = async (e) => {
     e.preventDefault();
-    if (drawnPoints.length < 3) return;
+    let finalCoords = drawnPoints;
+    if (!finalCoords || finalCoords.length < 3) {
+      // Fallback to Naval preset
+      finalCoords = ZONE_PRESETS[0].coords;
+    }
 
     setIsSubmittingZone(true);
     try {
+      const finalDuration = durationMinutesInput * 60;
       const payload = {
-        zone_id: `ZONE-TEMP-${Date.now()}`,
+        zone_id: `ZONE-TEMP-${Date.now().toString().slice(-6)}`,
         name: zoneName,
         zone_type: 'TEMPORARY_RED',
         severity: 'CRITICAL',
         min_altitude_m: Number(zoneMinAlt),
         max_altitude_m: Number(zoneMaxAlt),
-        duration_seconds: Number(zoneDuration),
-        polygon_coords: drawnPoints,
+        duration_seconds: Number(finalDuration),
+        polygon_coords: finalCoords,
         reason: zoneReason,
-        description: `Temporary tactical restriction active for ${zoneDuration}s`
+        description: `Tactical temporary restriction active for ${durationMinutesInput} minutes`
       };
 
       const token = localStorage.getItem('aeroguard_token') || 'aerosec-officer-token';
@@ -258,7 +417,8 @@ export default function LiveMap({
       const data = await res.json();
       if (data.success) {
         setShowZoneModal(false);
-        setDrawnPoints([]);
+        setZoneActionNotice(`Successfully deployed Temporary Red Zone '${zoneName}' (${durationMinutesInput}m duration).`);
+        setTimeout(() => setZoneActionNotice(null), 4000);
         if (onZoneCreated) onZoneCreated();
       } else {
         alert(`Error creating zone: ${data.error}`);
@@ -371,13 +531,27 @@ export default function LiveMap({
           )
         ) : '';
 
+        const actionButtons = (z.zone_type === 'TEMPORARY_RED' || z.expires_at) ? (
+          `<div style="margin-top: 8px; pt-2; border-top: 1px solid rgba(255,255,255,0.1); display: flex; gap: 6px; justify-content: flex-end;">
+            <button onclick="window._aeroExtendZone && window._aeroExtendZone('${z.zone_id}')" style="background: #2563EB; color: white; border: none; border-radius: 4px; padding: 4px 8px; font-size: 10px; font-weight: 600; cursor: pointer;">
+              +15M EXTEND
+            </button>
+            <button onclick="window._aeroRevokeZone && window._aeroRevokeZone('${z.zone_id}')" style="background: #DC2626; color: white; border: none; border-radius: 4px; padding: 4px 8px; font-size: 10px; font-weight: 600; cursor: pointer;">
+              REVOKE
+            </button>
+          </div>`
+        ) : '';
+
         polygon.bindPopup(`
-          <div style="font-family: 'Inter', sans-serif; font-size: 11px; min-width: 220px;">
-            <div style="font-weight: bold; color: ${color}; margin-bottom: 3px; font-size: 12px;">${z.name}</div>
-            <div style="color: #94a3b8; font-size: 10px;">Classification: <strong>${z.zone_type}</strong></div>
-            <div style="color: #94a3b8; font-size: 10px;">Ceiling Envelope: ${z.min_altitude_m}m - ${z.max_altitude_m}m AGL</div>
-            <div style="color: #cbd5e1; margin-top: 4px;">${z.reason || z.description || ''}</div>
+          <div style="font-family: 'Inter', sans-serif; font-size: 11px; min-width: 240px; line-height: 1.4;">
+            <div style="font-weight: bold; color: ${color}; margin-bottom: 3px; font-size: 12px; display: flex; align-items: center; justify-content: space-between;">
+              <span>${z.name}</span>
+            </div>
+            <div style="color: #94a3b8; font-size: 10px;">Classification: <strong>${z.zone_type}</strong> | Severity: <strong>${z.severity || 'HIGH'}</strong></div>
+            <div style="color: #94a3b8; font-size: 10px;">Altitude Envelope: <strong>${z.min_altitude_m}m - ${z.max_altitude_m}m AGL</strong></div>
+            <div style="color: #cbd5e1; margin-top: 4px; font-size: 11px;">${z.reason || z.description || ''}</div>
             ${countdownBadge}
+            ${actionButtons}
           </div>
         `);
 
@@ -712,15 +886,15 @@ export default function LiveMap({
 
       {/* Top Right Controls Bar */}
       <div className="absolute top-3 right-3 z-10 flex items-center space-x-2 font-sans text-xs">
-        {/* CREATE TEMPORARY RED ZONE BUTTON */}
+        {/* DEPLOY TEMPORARY RED ZONE BUTTON */}
         {!isDrawing ? (
           <button
-            onClick={startDrawing}
-            title="Draw polygon directly on Leaflet map to establish temporary restricted airspace"
-            className="bg-red-600/90 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg font-medium transition-all shadow-sm flex items-center space-x-1.5 border border-red-400/40 cursor-pointer"
+            onClick={() => { setShowZoneModal(true); setIsDrawing(false); }}
+            title="Configure, customize, and deploy temporary red zone with custom time period"
+            className="bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg font-medium transition-all shadow-md flex items-center space-x-1.5 border border-red-400/50 cursor-pointer animate-pulse"
           >
-            <PlusCircle className="w-3.5 h-3.5" />
-            <span>CREATE TEMP RED ZONE</span>
+            <ShieldAlert className="w-3.5 h-3.5 text-white" />
+            <span>DEPLOY TEMP RED ZONE</span>
           </button>
         ) : null}
 
@@ -778,77 +952,130 @@ export default function LiveMap({
 
       {/* Temporary Zone Configuration Modal */}
       {showZoneModal && (
-        <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-aerodark-850 border border-aerodark-700 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4 font-sans text-xs">
+        <div className="absolute inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-aerodark-850 border border-aerodark-700 rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4 font-sans text-xs">
             <div className="flex items-center justify-between border-b border-aerodark-700 pb-3">
-              <div className="flex items-center space-x-2 text-red-400 font-bold text-sm">
-                <ShieldAlert className="w-5 h-5" />
-                <span>CONFIRM TEMPORARY RED ZONE</span>
+              <div className="flex items-center space-x-2 text-red-400 font-bold text-sm tracking-wide">
+                <ShieldAlert className="w-5 h-5 text-red-500" />
+                <span>DEPLOY TEMPORARY RESTRICTED RED ZONE</span>
               </div>
-              <button onClick={cancelDrawing} className="text-slate-400 hover:text-white cursor-pointer">
+              <button onClick={() => setShowZoneModal(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <form onSubmit={handleSaveTemporaryZone} className="space-y-3.5">
+              {/* Placement & Presets */}
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Zone Name</label>
-                <input
-                  type="text"
-                  value={zoneName}
-                  onChange={(e) => setZoneName(e.target.value)}
-                  className="w-full bg-aerodark-900 border border-aerodark-700 rounded px-3 py-1.5 text-slate-100 outline-none focus:border-red-500"
-                  required
-                />
+                <label className="block text-slate-300 font-semibold mb-1">
+                  1. Zone Placement / Sector Coordinates
+                </label>
+                <div className="grid grid-cols-2 gap-1.5 mb-1.5">
+                  {ZONE_PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => handleSelectPreset(p.id)}
+                      className={`px-2.5 py-1.5 rounded text-left font-medium border cursor-pointer transition-all ${
+                        selectedPresetId === p.id
+                          ? 'bg-red-600/20 text-red-200 border-red-500 font-bold'
+                          : 'bg-aerodark-900 text-slate-400 border-aerodark-700 hover:text-white hover:bg-aerodark-800'
+                      }`}
+                    >
+                      <div className="text-[11px] text-slate-200">{p.label}</div>
+                      <div className="text-[9px] text-slate-400 truncate">{p.name}</div>
+                    </button>
+                  ))}
+                </div>
+                {selectedPresetId === 'DRAW' && (
+                  <div className="text-amber-400 text-[10px] mt-1 flex items-center space-x-1">
+                    <span>✏️ Click at least 3 points on the map to define custom perimeter boundaries.</span>
+                  </div>
+                )}
               </div>
 
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1">Operational Reason</label>
-                <input
-                  type="text"
-                  value={zoneReason}
-                  onChange={(e) => setZoneReason(e.target.value)}
-                  className="w-full bg-aerodark-900 border border-aerodark-700 rounded px-3 py-1.5 text-slate-100 outline-none focus:border-red-500"
-                  required
-                />
+              {/* Zone Name & Reason */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Zone Name</label>
+                  <input
+                    type="text"
+                    value={zoneName}
+                    onChange={(e) => setZoneName(e.target.value)}
+                    className="w-full bg-aerodark-900 border border-aerodark-700 rounded px-2.5 py-1.5 text-slate-100 outline-none focus:border-red-500 font-medium"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Operational Reason</label>
+                  <input
+                    type="text"
+                    value={zoneReason}
+                    onChange={(e) => setZoneReason(e.target.value)}
+                    className="w-full bg-aerodark-900 border border-aerodark-700 rounded px-2.5 py-1.5 text-slate-100 outline-none focus:border-red-500 font-medium"
+                    required
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1">Active Duration (Expiry Countdown)</label>
-                <div className="grid grid-cols-4 gap-2 mb-1.5">
+              {/* Time Period (Customizable Duration) */}
+              <div className="bg-aerodark-900/90 border border-aerodark-700 p-2.5 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-200 font-semibold flex items-center space-x-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>2. Active Time Period (Duration Countdown)</span>
+                  </label>
+                  <span className="text-[11px] text-red-300 font-mono font-bold">
+                    {durationMinutesInput} Minutes ({durationMinutesInput * 60}s)
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-6 gap-1.5">
                   {[
-                    { label: '60s (Demo)', val: 60 },
-                    { label: '5 min', val: 300 },
-                    { label: '15 min', val: 900 },
-                    { label: '1 hour', val: 3600 }
+                    { label: '5m', val: 5 },
+                    { label: '15m', val: 15 },
+                    { label: '30m', val: 30 },
+                    { label: '45m', val: 45 },
+                    { label: '1h', val: 60 },
+                    { label: '2h', val: 120 }
                   ].map((preset) => (
                     <button
                       key={preset.val}
                       type="button"
-                      onClick={() => setZoneDuration(preset.val)}
-                      className={`px-2 py-1 rounded text-center font-medium border cursor-pointer ${
-                        zoneDuration === preset.val
+                      onClick={() => {
+                        setDurationMinutesInput(preset.val);
+                        setZoneDuration(preset.val * 60);
+                      }}
+                      className={`py-1 rounded text-center font-bold border cursor-pointer ${
+                        durationMinutesInput === preset.val
                           ? 'bg-red-600 text-white border-red-500'
-                          : 'bg-aerodark-900 text-slate-300 border-aerodark-700 hover:text-white'
+                          : 'bg-aerodark-800 text-slate-300 border-aerodark-700 hover:text-white'
                       }`}
                     >
                       {preset.label}
                     </button>
                   ))}
                 </div>
-                <div className="flex items-center space-x-2">
-                  <span className="text-slate-400">Custom seconds:</span>
+
+                <div className="flex items-center space-x-2 pt-1 text-[11px]">
+                  <span className="text-slate-400">Custom time period (minutes):</span>
                   <input
                     type="number"
-                    min="10"
-                    max="86400"
-                    value={zoneDuration}
-                    onChange={(e) => setZoneDuration(Number(e.target.value))}
-                    className="w-24 bg-aerodark-900 border border-aerodark-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
+                    min="1"
+                    max="1440"
+                    value={durationMinutesInput}
+                    onChange={(e) => {
+                      const m = Math.max(1, Number(e.target.value));
+                      setDurationMinutesInput(m);
+                      setZoneDuration(m * 60);
+                    }}
+                    className="w-20 bg-aerodark-950 border border-aerodark-700 rounded px-2 py-1 text-slate-100 font-mono text-center font-bold text-xs"
                   />
+                  <span className="text-slate-400">min</span>
                 </div>
               </div>
 
+              {/* Altitude Limits */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-300 font-semibold mb-1">Min Altitude (m AGL)</label>
@@ -870,14 +1097,14 @@ export default function LiveMap({
                 </div>
               </div>
 
-              <div className="p-2.5 rounded bg-aerodark-900 border border-aerodark-700 text-slate-400 text-[11px] leading-relaxed">
-                <span className="text-amber-400 font-semibold">AUTOMATIC EXPIRY GUARANTEE:</span> At the end of {zoneDuration} seconds, this temporary restriction will automatically deactivate on the backend and map, stopping all violation alerts.
+              <div className="p-2.5 rounded bg-red-950/30 border border-red-900/50 text-slate-300 text-[11px] leading-relaxed">
+                <span className="text-amber-400 font-semibold">AUTOMATIC EXPIRATION POLICY:</span> At the end of {durationMinutesInput} minutes, this temporary restricted perimeter will automatically deactivate on the radar and map, resolving all zone violation alerts.
               </div>
 
               <div className="flex items-center justify-end space-x-2 pt-2 border-t border-aerodark-700">
                 <button
                   type="button"
-                  onClick={cancelDrawing}
+                  onClick={() => setShowZoneModal(false)}
                   className="px-3 py-1.5 rounded-lg border border-aerodark-700 text-slate-300 hover:text-white cursor-pointer"
                 >
                   Cancel
@@ -885,16 +1112,107 @@ export default function LiveMap({
                 <button
                   type="submit"
                   disabled={isSubmittingZone}
-                  className="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-semibold px-4 py-1.5 rounded-lg shadow-md cursor-pointer flex items-center space-x-1.5"
+                  className="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold px-4 py-1.5 rounded-lg shadow-lg cursor-pointer flex items-center space-x-1.5"
                 >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>{isSubmittingZone ? 'ACTIVATING...' : 'ACTIVATE RED ZONE'}</span>
+                  <Check className="w-4 h-4" />
+                  <span>{isSubmittingZone ? 'DEPLOYING...' : 'DEPLOY TEMPORARY RED ZONE'}</span>
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* Floating Notification for Zone Actions */}
+      {zoneActionNotice && (
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-30 bg-emerald-950/90 border border-emerald-500/70 text-emerald-200 px-4 py-2 rounded-xl text-xs font-semibold shadow-2xl backdrop-blur-md flex items-center space-x-2 animate-bounce">
+          <Check className="w-4 h-4 text-emerald-400" />
+          <span>{zoneActionNotice}</span>
+        </div>
+      )}
+
+      {/* Persistent Active Temporary Red Zone Banner */}
+      {(() => {
+        const activeTemp = (zones || []).find(z => {
+          if (z.zone_type !== 'TEMPORARY_RED' && !z.name?.toLowerCase().includes('temp') && !z.expires_at) return false;
+          if (z.active === 0) return false;
+          if (z.expires_at) {
+            const exp = new Date(z.expires_at.replace('Z', '')).getTime();
+            if (currentTime >= exp) return false;
+          }
+          return true;
+        });
+
+        if (!activeTemp) return null;
+
+        const expTime = new Date(activeTemp.expires_at.replace('Z', '')).getTime();
+        const remSecs = Math.max(0, Math.floor((expTime - currentTime) / 1000));
+        const m = Math.floor(remSecs / 60);
+        const s = remSecs % 60;
+        const timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+
+        return (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-20 bg-red-950/90 border border-red-500/70 shadow-2xl backdrop-blur-md px-4 py-1.5 rounded-full flex items-center space-x-3 text-xs text-red-200 animate-pulse">
+            <div className="flex items-center space-x-1.5 font-bold tracking-wider">
+              <ShieldAlert className="w-4 h-4 text-red-400" />
+              <span>ACTIVE TEMP RED ZONE: {activeTemp.name}</span>
+            </div>
+            <div className="font-mono bg-red-900/60 px-2 py-0.5 rounded border border-red-500/40 text-red-100 font-bold">
+              ⏱️ {timeStr}
+            </div>
+            <div className="flex items-center space-x-1.5 pl-2 border-l border-red-700/50">
+              <button
+                onClick={() => handleExtendZone(activeTemp.zone_id, 900)}
+                title="Extend temporary zone duration by +15 minutes"
+                className="px-2 py-0.5 rounded bg-blue-600/80 hover:bg-blue-500 text-white text-[10px] font-semibold cursor-pointer"
+              >
+                +15 MIN
+              </button>
+              <button
+                onClick={() => handleRevokeZone(activeTemp.zone_id)}
+                title="Immediately revoke and deactivate this temporary red zone"
+                className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white text-[10px] font-semibold cursor-pointer"
+              >
+                REVOKE
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* AI Trajectory Intent HUD Card */}
+      {(() => {
+        const activeTrack = (tracks && tracks.find(t => t.track_id === (track && track.track_id))) || track;
+        const aiPred = activeTrack?.trajectory?.ai_prediction;
+        if (!aiPred) return null;
+
+        return (
+          <div className="absolute top-14 right-3 z-10 max-w-sm bg-aerodark-900/95 backdrop-blur-md border border-amber-500/50 px-3.5 py-2.5 rounded-xl text-xs font-mono shadow-2xl space-y-1.5">
+            <div className="flex items-center justify-between text-amber-400 font-bold tracking-wider text-[11px]">
+              <div className="flex items-center space-x-1.5">
+                <Brain className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                <span>AI TRAJECTORY PREDICTION</span>
+              </div>
+              <span className="bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded text-[10px] border border-amber-500/30">
+                {Math.round((aiPred.confidence || 0.95) * 100)}% CONF
+              </span>
+            </div>
+            <div className="text-[11px] font-bold text-slate-100 flex items-center space-x-1.5">
+              <span className="text-amber-400">INTENT:</span>
+              <span className="text-amber-200">{aiPred.intent_label || aiPred.intent}</span>
+            </div>
+            <div className="text-[10px] text-slate-300 font-sans leading-tight">
+              {aiPred.summary}
+            </div>
+            {activeTrack?.trajectory?.breach_prediction && (
+              <div className="pt-1 text-[10px] text-red-400 font-bold flex items-center space-x-1 border-t border-aerodark-700/60">
+                <AlertTriangle className="w-3 h-3 text-red-400" />
+                <span>BREACH: {activeTrack.trajectory.breach_prediction.zone_name} in {activeTrack.trajectory.breach_prediction.estimated_seconds}s</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Bottom Left: Tactical Symbology Legend */}
       <div className="absolute bottom-3 left-3 z-10 bg-aerodark-900/90 backdrop-blur-md border border-aerodark-700 px-3 py-2.5 rounded-lg text-xs font-sans shadow-md space-y-1.5">

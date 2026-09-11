@@ -177,7 +177,36 @@ export default function TacticalRadarModal({
         leafletMarkersRef.current.push(polyline);
       }
     }
-  }, [currentTrack, historyTrail, modalView]);
+
+    // Draw other simultaneous contacts on tactical map
+    if (tracks && tracks.length > 0) {
+      tracks.forEach((t) => {
+        if (!t.latitude || !t.longitude || t.track_id === currentTrack?.track_id) return;
+        const isCrit = t?.risk?.level === 'CRITICAL' || t?.alert_classification === 'OUT_OF_ENVELOPE';
+        const isWarn = t?.risk?.level === 'HIGH' || t?.alert_classification === 'UNREGISTERED';
+        const tColor = isCrit ? '#EF4444' : isWarn ? '#F59E0B' : t.object_type === 'BIRD' ? '#38BDF8' : t.object_type === 'AIRCRAFT' ? '#818CF8' : '#10B981';
+
+        const subIcon = L.divIcon({
+          className: 'tactical-target-icon-sub',
+          html: `<div style="position:relative;width:18px;height:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+                   <div style="width:10px;height:10px;border-radius:50%;background:${tColor};border:1.5px solid #fff;box-shadow:0 0 8px ${tColor};"></div>
+                   <div style="position:absolute;top:-15px;background:#0F172A;color:${tColor};font-family:monospace;font-size:8px;font-weight:bold;padding:0 3px;border-radius:2px;border:1px solid ${tColor};white-space:nowrap;">${t.track_id}</div>
+                 </div>`,
+          iconSize: [18, 18],
+          iconAnchor: [9, 9]
+        });
+
+        const subMarker = L.marker([t.latitude, t.longitude], { icon: subIcon })
+          .addTo(map)
+          .bindPopup(`<b>${t.track_id}</b> (${t.object_type})<br/>Alt: ${t.altitude_m}m | Speed: ${t.speed_mps}m/s`);
+
+        subMarker.on('click', () => {
+          if (onPinTarget) onPinTarget(t);
+        });
+        leafletMarkersRef.current.push(subMarker);
+      });
+    }
+  }, [currentTrack, tracks, historyTrail, modalView]);
 
   if (!isOpen) return null;
 
@@ -267,6 +296,41 @@ export default function TacticalRadarModal({
     riskLevel === 'HIGH' ? '#F59E0B' :
     currentTrack?.object_type === 'BIRD' ? '#38BDF8' :
     currentTrack?.object_type === 'AIRCRAFT' ? '#818CF8' : '#10B981';
+
+  // Compute Polar coordinates for all concurrent contacts in airspace
+  const otherBlips = (tracks || [])
+    .filter((t) => t.track_id && t.track_id !== currentTrack?.track_id && t.latitude && t.longitude)
+    .map((t) => {
+      const dtLat = (t.latitude - stationLat) * 111000;
+      const dtLon = (t.longitude - stationLon) * 111000 * Math.cos((stationLat * Math.PI) / 180);
+      const tRange = Math.sqrt(dtLat * dtLat + dtLon * dtLon);
+      let tBearing = Math.round((Math.atan2(dtLon, dtLat) * 180) / Math.PI);
+      if (tBearing < 0) tBearing += 360;
+      const tNormR = Math.min(0.95, tRange / maxR);
+      const tRad = (tBearing - 90) * (Math.PI / 180);
+
+      const tRisk = t?.risk?.level || t?.risk_level || 'LOW';
+      const tBlipColor =
+        tRisk === 'CRITICAL' || t?.alert_classification === 'OUT_OF_ENVELOPE'
+          ? '#EF4444'
+          : tRisk === 'HIGH' || t?.alert_classification === 'UNREGISTERED'
+          ? '#F59E0B'
+          : t?.object_type === 'BIRD'
+          ? '#38BDF8'
+          : t?.object_type === 'AIRCRAFT'
+          ? '#818CF8'
+          : '#10B981';
+
+      return {
+        track: t,
+        x: 50 + tNormR * 46 * Math.cos(tRad),
+        y: 50 + tNormR * 46 * Math.sin(tRad),
+        color: tBlipColor,
+        rangeM: Math.round(tRange),
+        bearingDeg: tBearing,
+        headingDeg: t.heading_deg
+      };
+    });
 
   // Pop-Out to Standalone External Browser Window (Dual-Monitor Ops)
   const handleOpenStandaloneWindow = () => {
@@ -675,6 +739,48 @@ export default function TacticalRadarModal({
                       opacity: 0.15 + (idx / radarTrail.length) * 0.55
                     }}
                   />
+                ))}
+
+                {/* Other Simultaneous Airspace Contacts on Radar */}
+                {otherBlips.map((ob) => (
+                  <div
+                    key={ob.track.track_id}
+                    className="absolute z-15 transition-all duration-500 cursor-pointer group"
+                    style={{
+                      top: `${ob.y}%`,
+                      left: `${ob.x}%`,
+                      transform: 'translate(-50%, -50%)'
+                    }}
+                    onClick={() => onPinTarget && onPinTarget(ob.track)}
+                    title={`${ob.track.track_id} (${ob.track.object_type}) - Click to lock target`}
+                  >
+                    {/* Contact Blip Core */}
+                    <div
+                      className="w-3 h-3 rounded-full border border-white shadow-md flex items-center justify-center opacity-85 group-hover:opacity-100 group-hover:scale-125 transition-transform"
+                      style={{ backgroundColor: ob.color, boxShadow: `0 0 10px ${ob.color}` }}
+                    >
+                      <div className="w-0.5 h-0.5 rounded-full bg-white"></div>
+                    </div>
+
+                    {/* Miniature Heading Vector Line */}
+                    {ob.headingDeg !== undefined && (
+                      <div
+                        className="absolute top-1/2 left-1/2 w-4 h-[1px] origin-left pointer-events-none opacity-70"
+                        style={{
+                          transform: `rotate(${ob.headingDeg - 90}deg)`,
+                          backgroundColor: ob.color
+                        }}
+                      />
+                    )}
+
+                    {/* Track ID Pill */}
+                    <div
+                      className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-1 py-0.2 rounded text-[7px] font-mono font-bold whitespace-nowrap bg-aerodark-950/90 border pointer-events-none"
+                      style={{ color: ob.color, borderColor: `${ob.color}66` }}
+                    >
+                      {ob.track.track_id}
+                    </div>
+                  </div>
                 ))}
 
                 {/* Live Target Contact Blip */}

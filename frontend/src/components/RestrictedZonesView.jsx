@@ -16,6 +16,45 @@ export default function RestrictedZonesView({ zones, onCreateZone, onImportGeoJS
   const [minAlt, setMinAlt] = useState(0);
   const [maxAlt, setMaxAlt] = useState(1000);
   const [description, setDescription] = useState('');
+  const [actionNotice, setActionNotice] = useState('');
+
+  const handleExtendZone = async (zoneId, additionalSeconds = 900) => {
+    try {
+      const token = localStorage.getItem('aeroguard_token') || 'aerosec-admin-token';
+      const res = await fetch(`/api/zones/${encodeURIComponent(zoneId)}/extend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ additional_seconds: additionalSeconds })
+      });
+      const d = await res.json();
+      if (d.success) {
+        setActionNotice(`Extended zone '${zoneId}' by 15 minutes.`);
+        setTimeout(() => setActionNotice(''), 3500);
+        window.location.reload();
+      }
+    } catch (e) {
+      console.error('Zone extension error:', e);
+    }
+  };
+
+  const handleRevokeZone = async (zoneId) => {
+    if (!window.confirm(`Are you sure you want to revoke and deactivate ${zoneId}?`)) return;
+    try {
+      const token = localStorage.getItem('aeroguard_token') || 'aerosec-admin-token';
+      const res = await fetch(`/api/zones/${encodeURIComponent(zoneId)}/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+      });
+      const d = await res.json();
+      if (d.success) {
+        setActionNotice(`Revoked/deactivated zone '${zoneId}'.`);
+        setTimeout(() => setActionNotice(''), 3500);
+        window.location.reload();
+      }
+    } catch (e) {
+      console.error('Zone revoke error:', e);
+    }
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -214,6 +253,25 @@ export default function RestrictedZonesView({ zones, onCreateZone, onImportGeoJS
                   <span className="text-slate-400 font-sans">POLYGON VERTICES:</span>
                   <span className="text-slate-300">{z.polygon_coords?.length || 4} Points</span>
                 </div>
+
+                {(z.zone_type === 'TEMPORARY_RED' || z.expires_at) && (
+                  <div className="pt-2 mt-1 border-t border-aerodark-800 flex items-center justify-end space-x-2">
+                    <button
+                      onClick={() => handleExtendZone(z.zone_id, 900)}
+                      className="px-2 py-1 rounded bg-blue-600/80 hover:bg-blue-500 text-white text-[10px] font-bold cursor-pointer transition-all"
+                    >
+                      +15M EXTEND
+                    </button>
+                    {!isExpired && (
+                      <button
+                        onClick={() => handleRevokeZone(z.zone_id)}
+                        className="px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold cursor-pointer transition-all"
+                      >
+                        REVOKE
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );

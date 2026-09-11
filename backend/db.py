@@ -2,7 +2,7 @@ import os
 import sqlite3
 import json
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -472,6 +472,27 @@ def seed_default_data(conn):
         (zone_id, name, zone_type, min_altitude_m, max_altitude_m, polygon_coords, severity, description, expires_at, created_by, active, reason)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, z)
+
+    # Seed Active Default Tactical Temporary Red Zone (placed on coastal sector, active for 45 min)
+    temp_exp = (datetime.now(timezone.utc) + timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M:%S")
+    temp_poly = json.dumps([
+        [13.060, 80.282],
+        [13.076, 80.282],
+        [13.076, 80.300],
+        [13.060, 80.300]
+    ])
+    cursor.execute("""
+    INSERT INTO restricted_zones 
+    (zone_id, name, zone_type, min_altitude_m, max_altitude_m, polygon_coords, severity, description, expires_at, created_by, active, reason)
+    VALUES ('ZONE-TEMP-TACTICAL-01', 'Tactical VIP Security & Bomb Squad Cordon', 'TEMPORARY_RED', 0.0, 400.0, ?, 'CRITICAL',
+            'Emergency Coastal Tactical Cordon - Active Counter-UAS Perimeter', ?, 'TACTICAL_COMMAND', 1, 'VIP Movement & Anti-Sabotage Sweep')
+    ON CONFLICT(zone_id) DO UPDATE SET
+        active = 1,
+        expires_at = excluded.expires_at,
+        polygon_coords = excluded.polygon_coords,
+        name = excluded.name,
+        reason = excluded.reason
+    """, (temp_poly, temp_exp))
 
     # Seed Default Coastal Optical Cameras
     cameras = [

@@ -367,6 +367,87 @@ def create_zone():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 400
 
+@app.route("/api/zones/<zone_id>/extend", methods=["POST"])
+def extend_zone(zone_id):
+    user = get_current_user() or {"username": "OFFICER_STATION", "role": "OFFICER"}
+    data = request.json or {}
+    additional_s = float(data.get("additional_seconds", 900))  # Default +15 minutes
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM restricted_zones WHERE zone_id = ?", (zone_id,))
+        zone = cursor.fetchone()
+        if not zone:
+            conn.close()
+            return jsonify({"success": False, "error": f"Zone '{zone_id}' not found"}), 404
+
+        now = datetime.now(timezone.utc)
+        base_time = now
+        if zone["expires_at"]:
+            try:
+                current_exp = datetime.strptime(zone["expires_at"].replace("Z", "").split(".")[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                if current_exp > now:
+                    base_time = current_exp
+            except Exception:
+                pass
+
+        new_exp_dt = base_time + timedelta(seconds=additional_s)
+        new_exp = new_exp_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor.execute("""
+            UPDATE restricted_zones 
+            SET expires_at = ?, active = 1 
+            WHERE zone_id = ?
+        """, (new_exp, zone_id))
+        conn.commit()
+        conn.close()
+
+        audit_service.log_event(
+            operator_id=user["username"],
+            operator_role=user.get("role", "OFFICER"),
+            action="EXTEND_GEOFENCE_ZONE",
+            resource_type="GEOFENCE",
+            resource_id=zone_id,
+            result="EXTENDED",
+            reason_code="TACTICAL_AIRSPACE_EXTENSION",
+            details=f"Extended temporary zone '{zone['name']}' by {int(additional_s)}s (New Expiry: {new_exp})"
+        )
+
+        return jsonify({"success": True, "zone_id": zone_id, "expires_at": new_exp, "active": 1})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/zones/<zone_id>/revoke", methods=["POST", "DELETE"])
+def revoke_zone(zone_id):
+    user = get_current_user() or {"username": "OFFICER_STATION", "role": "OFFICER"}
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM restricted_zones WHERE zone_id = ?", (zone_id,))
+        zone = cursor.fetchone()
+        if not zone:
+            conn.close()
+            return jsonify({"success": False, "error": f"Zone '{zone_id}' not found"}), 404
+
+        cursor.execute("UPDATE restricted_zones SET active = 0 WHERE zone_id = ?", (zone_id,))
+        conn.commit()
+        conn.close()
+
+        audit_service.log_event(
+            operator_id=user["username"],
+            operator_role=user.get("role", "OFFICER"),
+            action="REVOKE_GEOFENCE_ZONE",
+            resource_type="GEOFENCE",
+            resource_id=zone_id,
+            result="REVOKED",
+            reason_code="OPERATIONAL_DEACTIVATION",
+            details=f"Deactivated/revoked temporary zone '{zone['name']}' ({zone_id})"
+        )
+
+        return jsonify({"success": True, "zone_id": zone_id, "active": 0})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route("/api/zones/import-geojson", methods=["POST"])
 def import_geojson_zones():
     user = get_current_user() or {"username": "OFFICER_STATION", "role": "OFFICER"}

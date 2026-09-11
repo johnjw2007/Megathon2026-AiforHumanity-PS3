@@ -167,10 +167,13 @@ class TrackManager:
             allowed_zone_id = auth_info.get("permission_info", {}).get("allowed_zone")
         geofence_info = rules_engine.check_geofence(lat, lon, alt_m, allowed_zone_id=allowed_zone_id)
 
-        # 8. Kinematic Trajectory Extrapolation
+        # 8. Kinematic Trajectory Extrapolation & AI Intent Prediction
         trajectory_info = rules_engine.predict_trajectory(
             lat=lat, lon=lon, altitude=alt_m,
-            speed_mps=speed_mps, heading_deg=heading_deg, horizon_seconds=30
+            speed_mps=speed_mps, heading_deg=heading_deg, horizon_seconds=30,
+            history=self.track_history.get(track_id, []),
+            classification=auth_info.get("classification"),
+            scenario=report.get("scenario")
         )
 
         # 9. Risk Assessment
@@ -468,7 +471,7 @@ class TrackManager:
             demo_prefixes = ["TRACK-", "UNKNOWN-", "TRK-", "DRN-", "RID-", "ALT-"]
             to_remove = []
             for tid, t in list(self.active_tracks.items()):
-                if t.get("source") in ["SIMULATOR", "REMOTE_ID_SIM"] or any(tid.startswith(p) for p in demo_prefixes):
+                if t.get("source") in ["SIMULATOR", "REMOTE_ID_SIM", "SIMULATED_REMOTE_ID"] or any(tid.startswith(p) for p in demo_prefixes):
                     to_remove.append(tid)
 
             for tid in to_remove:

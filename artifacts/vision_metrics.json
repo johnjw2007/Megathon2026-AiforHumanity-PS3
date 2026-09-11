@@ -1,0 +1,137 @@
+{
+  "total_test_cases": 12,
+  "true_positives": 8,
+  "true_negatives": 4,
+  "false_positives": 0,
+  "false_negatives": 0,
+  "accuracy": 1.0,
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1": 1.0,
+  "fpr": 0.0,
+  "mean_latency_ms": 1.934,
+  "p95_latency_ms": 3.455,
+  "throughput_fps": 516.9,
+  "cases": [
+    {
+      "id": "TC-VIS-01",
+      "category": "Obvious Drone",
+      "ground_truth_drone": true,
+      "predicted_drone": true,
+      "verdict": "TP",
+      "drone_confidence": 0.94,
+      "primary_label": "drone",
+      "latency_ms": 2.096
+    },
+    {
+      "id": "TC-VIS-02",
+      "category": "No Drone (Clear Sky)",
+      "ground_truth_drone": false,
+      "predicted_drone": false,
+      "verdict": "TN",
+      "drone_confidence": 0.0,
+      "primary_label": "none",
+      "latency_ms": 0.725
+    },
+    {
+      "id": "TC-VIS-03",
+      "category": "Distant Drone",
+      "ground_truth_drone": true,
+      "predicted_drone": true,
+      "verdict": "TP",
+      "drone_confidence": 0.576,
+      "primary_label": "drone",
+      "latency_ms": 0.799
+    },
+    {
+      "id": "TC-VIS-04",
+      "category": "Small Drone (High Altitude)",
+      "ground_truth_drone": true,
+      "predicted_drone": true,
+      "verdict": "TP",
+      "drone_confidence": 0.544,
+      "primary_label": "drone",
+      "latency_ms": 0.717
+    },
+    {
+      "id": "TC-VIS-05",
+      "category": "Different Viewpoints (Oblique)",
+      "ground_truth_drone": true,
+      "predicted_drone": true,
+      "verdict": "TP",
+      "drone_confidence": 0.88,
+      "primary_label": "drone",
+      "latency_ms": 1.783
+    },
+    {
+      "id": "TC-VIS-06",
+      "category": "Different Backgrounds (Cloud Clutter)",
+      "ground_truth_drone": true,
+      "predicted_drone": true,
+      "verdict": "TP",
+      "drone_confidence": 0.85,
+      "primary_label": "drone",
+      "latency_ms": 1.721
+    },
+    {
+      "id": "TC-VIS-07",
+      "category": "Low-Light Scene (Dusk)",
+      "ground_truth_drone": true,
+      "predicted_drone": true,
+      "verdict": "TP",
+      "drone_confidence": 0.57,
+      "primary_label": "drone",
+      "latency_ms": 2.431
+    },
+    {
+      "id": "TC-VIS-08",
+      "category": "Partial Occlusion (Foliage)",
+      "ground_truth_drone": true,
+      "predicted_drone": true,
+      "verdict": "TP",
+      "drone_confidence": 0.533,
+      "primary_label": "drone",
+      "latency_ms": 1.739
+    },
+    {
+      "id": "TC-VIS-09",
+      "category": "Multiple Objects (Dual Formation)",
+      "ground_truth_drone": true,
+      "predicted_drone": true,
+      "verdict": "TP",
+      "drone_confidence": 0.91,
+      "primary_label": "drone",
+      "latency_ms": 3.657
+    },
+    {
+      "id": "TC-VIS-10",
+      "category": "Birds in Flight (Hard Negative)",
+      "ground_truth_drone": false,
+      "predicted_drone": false,
+      "verdict": "TN",
+      "drone_confidence": 0.0,
+      "primary_label": "bird",
+      "latency_ms": 3.29
+    },
+    {
+      "id": "TC-VIS-11",
+      "category": "Commercial Aircraft (Large Negative)",
+      "ground_truth_drone": false,
+      "predicted_drone": false,
+      "verdict": "TN",
+      "drone_confidence": 0.0,
+      "primary_label": "airplane",
+      "latency_ms": 3.056
+    },
+    {
+      "id": "TC-VIS-12",
+      "category": "Ambiguous Object (Floating Clutter)",
+      "ground_truth_drone": false,
+      "predicted_drone": false,
+      "verdict": "TN",
+      "drone_confidence": 0.0,
+      "primary_label": "clutter",
+      "latency_ms": 1.199
+    }
+  ]
+}
