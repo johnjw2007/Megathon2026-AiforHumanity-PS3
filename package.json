@@ -1,13 +1,8 @@
-{
-  "name": "aeroguard",
+﻿{
+  "name": "megathon2026-pixel-pals",
   "version": "1.0.0",
-  "description": "AeroGuard — Coastal Airspace Surveillance & Drone Activity Monitoring Console",
+  "private": true,
   "scripts": {
-    "dev": "npm run dev --prefix frontend",
-    "start": "npm run dev --prefix frontend",
-    "frontend": "npm run dev --prefix frontend",
-    "build": "npm run build --prefix frontend",
-    "backend": "python backend/app.py",
-    "verify": "python verify_system.py"
+    "build": "npm --prefix frontend install && npm --prefix frontend run build"
   }
 }
