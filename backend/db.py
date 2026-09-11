@@ -281,8 +281,10 @@ def init_db():
     for col, col_type in [
         ("audit_id", "TEXT"),
         ("operator_id", "TEXT"),
+        ("user_name", "TEXT"),
         ("operator_role", "TEXT"),
         ("resource_type", "TEXT"),
+        ("resource", "TEXT"),
         ("resource_id", "TEXT"),
         ("reason_code", "TEXT"),
         ("previous_hash", "TEXT"),
