@@ -69,6 +69,23 @@ const ZONE_PRESETS = [
   }
 ];
 
+// Defensive coordinate extractor to prevent any Leaflet Invalid LatLng object errors
+function safeLatLng(item) {
+  if (!item) return null;
+  let lat, lon;
+  if (Array.isArray(item)) {
+    lat = Number(item[0]);
+    lon = Number(item[1]);
+  } else if (typeof item === 'object') {
+    lat = Number(item.latitude !== undefined ? item.latitude : item.lat);
+    lon = Number(item.longitude !== undefined ? item.longitude : item.lon);
+  }
+  if (typeof lat === 'number' && typeof lon === 'number' && !isNaN(lat) && !isNaN(lon) && isFinite(lat) && isFinite(lon)) {
+    return [lat, lon];
+  }
+  return null;
+}
+
 export default function LiveMap({
   track,
   tracks = [],
@@ -449,17 +466,19 @@ export default function LiveMap({
   const handlePinTarget = () => {
     const map = mapInstanceRef.current;
     if (!map || !track) return;
-    map.flyTo([track.latitude, track.longitude], 14, { animate: true, duration: 0.8 });
-    setIsOffScreen(false);
+    const pos = safeLatLng(track);
+    if (pos) {
+      map.flyTo(pos, 14, { animate: true, duration: 0.8 });
+      setIsOffScreen(false);
+    }
   };
 
   // React to external "PIN TARGET" requests
   useEffect(() => {
     if (!pinnedTarget || !mapInstanceRef.current) return;
-    const lat = pinnedTarget.latitude;
-    const lon = pinnedTarget.longitude;
-    if (lat && lon) {
-      mapInstanceRef.current.flyTo([lat, lon], 15, { animate: true, duration: 1.0 });
+    const pos = safeLatLng(pinnedTarget);
+    if (pos) {
+      mapInstanceRef.current.flyTo(pos, 15, { animate: true, duration: 1.0 });
       setAutoTrack(true);
       setIsOffScreen(false);
     }
@@ -478,8 +497,10 @@ export default function LiveMap({
 
     if (zones && zones.length > 0) {
       zones.forEach((z) => {
-        const coords = z.polygon_coords;
-        if (!coords || coords.length === 0) return;
+        const rawCoords = z.polygon_coords;
+        if (!rawCoords || !Array.isArray(rawCoords) || rawCoords.length === 0) return;
+        const coords = rawCoords.map(safeLatLng).filter(Boolean);
+        if (coords.length < 3) return;
 
         // Calculate expiration
         let isExpired = false;
@@ -573,6 +594,9 @@ export default function LiveMap({
 
     if (cameras && cameras.length > 0) {
       cameras.forEach((cam) => {
+        const camPos = safeLatLng(cam);
+        if (!camPos) return;
+        const [cLat, cLon] = camPos;
         const isSelected = selectedCamera && selectedCamera.camera_id === cam.camera_id;
 
         const camIcon = L.divIcon({
@@ -597,36 +621,36 @@ export default function LiveMap({
           iconAnchor: [12, 12]
         });
 
-        const marker = L.marker([cam.latitude, cam.longitude], { icon: camIcon });
+        const marker = L.marker(camPos, { icon: camIcon });
         marker.on('click', () => {
           if (onSelectCamera) onSelectCamera(cam);
         });
         marker.bindPopup(`
           <div style="font-family: 'Inter', sans-serif; font-size: 11px;">
             <div style="font-weight: bold; color: #38BDF8;">${cam.name} (${cam.camera_id})</div>
-            <div style="color: #94a3b8; font-size: 10px;">Range: ${cam.coverage_radius_m}m | Azimuth: ${cam.heading_deg}°</div>
-            <div style="color: #10B981; font-weight: 600; margin-top: 2px;">STATUS: ${cam.status}</div>
+            <div style="color: #94a3b8; font-size: 10px;">Range: ${cam.coverage_radius_m || 1000}m | Azimuth: ${cam.heading_deg || 0}°</div>
+            <div style="color: #10B981; font-weight: 600; margin-top: 2px;">STATUS: ${cam.status || 'ACTIVE'}</div>
           </div>
         `);
         camerasLayerRef.current.addLayer(marker);
 
         // Draw Optical FOV Cone
-        const r_m = cam.coverage_radius_m;
-        const heading = cam.heading_deg;
-        const half_fov = cam.fov_deg / 2.0;
+        const r_m = cam.coverage_radius_m || 1000;
+        const heading = cam.heading_deg || 0;
+        const half_fov = (cam.fov_deg || 60) / 2.0;
 
-        const conePts = [[cam.latitude, cam.longitude]];
+        const conePts = [camPos];
         const steps = 10;
         for (let i = 0; i <= steps; i++) {
-          const ang = (heading - half_fov) + (i * cam.fov_deg / steps);
+          const ang = (heading - half_fov) + (i * (cam.fov_deg || 60) / steps);
           const rad = (ang * Math.PI) / 180.0;
           const dN = r_m * Math.cos(rad);
           const dE = r_m * Math.sin(rad);
-          const lat = cam.latitude + (dN / 111000.0);
-          const lon = cam.longitude + (dE / (111000.0 * Math.cos((cam.latitude * Math.PI) / 180.0)));
+          const lat = cLat + (dN / 111000.0);
+          const lon = cLon + (dE / (111000.0 * Math.cos((cLat * Math.PI) / 180.0)));
           conePts.push([lat, lon]);
         }
-        conePts.push([cam.latitude, cam.longitude]);
+        conePts.push(camPos);
 
         const cone = L.polygon(conePts, {
           color: '#38BDF8',
@@ -666,9 +690,10 @@ export default function LiveMap({
 
     // Primary/Selected track for autoTrack, ingress, and breadcrumbs
     const activeSelectedTrack = track || displayTracks[0];
+    const activePos = safeLatLng(activeSelectedTrack);
 
     // Detect new incoming target on primary track
-    if (activeSelectedTrack && lastTrackIdRef.current !== activeSelectedTrack.track_id) {
+    if (activeSelectedTrack && activePos && lastTrackIdRef.current !== activeSelectedTrack.track_id) {
       lastTrackIdRef.current = activeSelectedTrack.track_id;
       setIncomingNotice({ trackId: activeSelectedTrack.track_id, type: activeSelectedTrack.object_type });
       setTimeout(() => setIncomingNotice(null), 4000);
@@ -686,29 +711,30 @@ export default function LiveMap({
         `,
         iconAnchor: [0, 20]
       });
-      ingressMarkerRef.current = L.marker([activeSelectedTrack.latitude, activeSelectedTrack.longitude], { icon: ingressIcon }).addTo(map);
+      ingressMarkerRef.current = L.marker(activePos, { icon: ingressIcon }).addTo(map);
 
       if (autoTrack) {
-        map.flyTo([activeSelectedTrack.latitude, activeSelectedTrack.longitude], 14, { animate: true, duration: 1.0 });
+        map.flyTo(activePos, 14, { animate: true, duration: 1.0 });
         setIsOffScreen(false);
       }
     }
 
-    if (activeSelectedTrack) {
+    if (activeSelectedTrack && activePos) {
       if (autoTrack) {
-        map.panTo([activeSelectedTrack.latitude, activeSelectedTrack.longitude], { animate: true, duration: 0.5 });
+        map.panTo(activePos, { animate: true, duration: 0.5 });
         setIsOffScreen(false);
       } else {
-        const inBounds = map.getBounds().contains([activeSelectedTrack.latitude, activeSelectedTrack.longitude]);
+        const inBounds = map.getBounds().contains(activePos);
         setIsOffScreen(!inBounds);
       }
     }
 
     // Render each track marker
     displayTracks.forEach((t) => {
+      const pos = safeLatLng(t);
+      if (!pos) return;
+      const [lat, lon] = pos;
       const isSelected = activeSelectedTrack && activeSelectedTrack.track_id === t.track_id;
-      const lat = t.latitude;
-      const lon = t.longitude;
 
       let markerColor = '#10B981'; // Authorized
       let symbol = '🛸';
@@ -775,10 +801,10 @@ export default function LiveMap({
       });
 
       if (trackMarkersRef.current[t.track_id]) {
-        trackMarkersRef.current[t.track_id].setLatLng([lat, lon]);
+        trackMarkersRef.current[t.track_id].setLatLng(pos);
         trackMarkersRef.current[t.track_id].setIcon(targetIcon);
       } else {
-        const marker = L.marker([lat, lon], { icon: targetIcon }).addTo(map);
+        const marker = L.marker(pos, { icon: targetIcon }).addTo(map);
         marker.on('click', () => {
           if (onSelectTrack) onSelectTrack(t);
         });
@@ -787,9 +813,10 @@ export default function LiveMap({
     });
 
     // Historical Breadcrumbs Trail
-    const trail = (activeSelectedTrack?.history && activeSelectedTrack.history.length > 0)
+    const rawTrail = (activeSelectedTrack?.history && activeSelectedTrack.history.length > 0)
       ? activeSelectedTrack.history
       : (historyTrail || []);
+    const trail = (rawTrail || []).map(safeLatLng).filter(Boolean);
 
     if (trail && trail.length > 0) {
       if (trailLineRef.current) {
@@ -802,21 +829,28 @@ export default function LiveMap({
           dashArray: '3, 4'
         }).addTo(map);
       }
+    } else if (trailLineRef.current) {
+      trailLineRef.current.setLatLngs([]);
     }
 
     // 30-Second Forward Kinematic Trajectory
     const projPts = activeSelectedTrack?.trajectory?.predicted_points;
-    if (projPts && projPts.length > 0) {
-      const trajCoords = [[activeSelectedTrack.latitude, activeSelectedTrack.longitude], ...projPts.map((p) => [p.latitude, p.longitude])];
-      if (trajectoryLineRef.current) {
-        trajectoryLineRef.current.setLatLngs(trajCoords);
-      } else {
-        trajectoryLineRef.current = L.polyline(trajCoords, {
-          color: '#F59E0B',
-          weight: 2,
-          dashArray: '4, 4',
-          opacity: 0.8
-        }).addTo(map);
+    if (activePos && projPts && projPts.length > 0) {
+      const validPoints = projPts.map(safeLatLng).filter(Boolean);
+      const trajCoords = [activePos, ...validPoints];
+      if (trajCoords.length >= 2) {
+        if (trajectoryLineRef.current) {
+          trajectoryLineRef.current.setLatLngs(trajCoords);
+        } else {
+          trajectoryLineRef.current = L.polyline(trajCoords, {
+            color: '#F59E0B',
+            weight: 2,
+            dashArray: '4, 4',
+            opacity: 0.8
+          }).addTo(map);
+        }
+      } else if (trajectoryLineRef.current) {
+        trajectoryLineRef.current.setLatLngs([]);
       }
     } else if (trajectoryLineRef.current) {
       trajectoryLineRef.current.setLatLngs([]);

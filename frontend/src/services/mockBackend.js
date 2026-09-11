@@ -113,7 +113,14 @@ class MockBackendEngine {
           const pRad = (curHead * Math.PI) / 180;
           curLat += (speed * Math.cos(pRad) * stepDt) / 111000;
           curLon += (speed * Math.sin(pRad) * stepDt) / (111000 * Math.cos((curLat * Math.PI) / 180));
-          predictedPoints.push([+curLat.toFixed(6), +curLon.toFixed(6)]);
+          predictedPoints.push({
+            latitude: +curLat.toFixed(6),
+            longitude: +curLon.toFixed(6),
+            altitude_m: track.altitude_m,
+            heading_deg: +curHead.toFixed(1),
+            dt_seconds: s * 3.5,
+            distance_m: Math.round(speed * s * 3.5)
+          });
         }
 
         track.trajectory = {
