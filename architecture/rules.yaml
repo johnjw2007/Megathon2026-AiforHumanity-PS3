@@ -1,0 +1,64 @@
+# Machine-Checkable Architectural Rules for Megathon 2026 Platform
+rules:
+  - id: "ARCH-001"
+    name: "Preprocessing Equivalence"
+    description: "Training preprocessing and inference preprocessing must use the exact same canonical implementation in preprocessing.py."
+    check_type: "AST_IMPORT_ANALYSIS"
+    target_files:
+      - "src/data_loader.py"
+      - "src/inference.py"
+    expected_import: "from preprocessing import transform_and_scale"
+
+  - id: "ARCH-002"
+    name: "Test Split Isolation"
+    description: "Test split data must never be fit by any transformation or participating in threshold tuning."
+    check_type: "CODE_INSPECTION"
+    target_files:
+      - "src/data_loader.py"
+    rule_condition: "fit=True is only called on X_tr"
+
+  - id: "ARCH-003"
+    name: "Validation Split Threshold Calibration"
+    description: "Decision threshold selection must occur strictly on the validation set, preserving test set purity."
+    check_type: "CONFIG_VERIFICATION"
+    target_files:
+      - "src/evaluate.py"
+    rule_condition: "threshold_optimization runs on data['y_val']"
+
+  - id: "ARCH-004"
+    name: "Validated Model Artifact Integrity"
+    description: "Inference must load a validated PyTorch checkpoint (.pt) with explicit metadata and verified state dict."
+    check_type: "ARTIFACT_PRESENCE"
+    target_artifacts:
+      - "models/drone_detector.pt"
+      - "models/baseline.pt"
+      - "models/config.json"
+
+  - id: "ARCH-005"
+    name: "Independent Modality Testability"
+    description: "Vision, Radar, and RF modules must remain independently testable without cross-module initialization dependencies."
+    check_type: "IMPORT_INDEPENDENCE"
+    modules:
+      - "src/vision/detector.py"
+      - "src/radar/radar_simulator.py"
+      - "src/inference.py"
+
+  - id: "ARCH-006"
+    name: "Raw Input Immutability"
+    description: "Fusion engine must consume evidence objects without altering raw sensor telemetry."
+    check_type: "DATA_FLOW"
+    target_files:
+      - "src/fusion/decision_engine.py"
+
+  - id: "ARCH-007"
+    name: "Acyclic Dependency Graph"
+    description: "No circular dependencies permitted between core modules (preprocessing -> models -> train/evaluate -> inference)."
+    check_type: "DEPENDENCY_GRAPH"
+
+  - id: "ARCH-008"
+    name: "Explicit Simulation Boundary"
+    description: "Unavailable physical sensors (Radar) must be explicitly flagged with is_simulated=True and source tags."
+    check_type: "ATTRIBUTE_INSPECTION"
+    target_classes:
+      - "src/radar/radar_interface.py:RadarDetection"
+    required_attribute: "is_simulated"

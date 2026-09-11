@@ -1,0 +1,88 @@
+{
+  "dataset": {
+    "path": "C:\\Users\\admin\\Desktop\\Megathon26\\astra_dataset.csv",
+    "rows": 2800,
+    "n_classes_original": 4
+  },
+  "binary_classes": {
+    "drone": [
+      0
+    ],
+    "non_drone": [
+      1,
+      2,
+      3
+    ]
+  },
+  "split": {
+    "train": 1960,
+    "val": 420,
+    "test": 420,
+    "strategy": "stratified",
+    "seed": 42
+  },
+  "preprocessing": {
+    "seq_len": 150,
+    "n_input_channels": 2,
+    "n_channels": 3,
+    "n_feature_channels": 3,
+    "input_dim": 450
+  },
+  "model": {
+    "baseline": {
+      "path": "models\\baseline.pt",
+      "arch": "BaselineLogistic",
+      "params": 451
+    },
+    "cnn": {
+      "path": "models\\drone_detector.pt",
+      "arch": "DroneCNN",
+      "params": 14241
+    },
+    "best_by_val_roc_auc": "baseline"
+  },
+  "training": {
+    "epochs": 100,
+    "batch_size": 256,
+    "lr": 0.001,
+    "patience": 12,
+    "device": "cpu",
+    "seed": 42
+  },
+  "best_epoch": {
+    "baseline": 21,
+    "cnn": 2
+  },
+  "val_best_roc_auc": {
+    "baseline": 1.0,
+    "cnn": 1.0
+  },
+  "test_metrics": {
+    "baseline": {
+      "accuracy": 0.9809523809523809,
+      "precision": 0.9292035398230089,
+      "recall": 1.0,
+      "f1": 0.963302752293578,
+      "roc_auc": 0.9999697656840514,
+      "pr_auc": 0.9999101527403413
+    },
+    "cnn": {
+      "accuracy": 0.9857142857142858,
+      "precision": 1.0,
+      "recall": 0.9428571428571428,
+      "f1": 0.9705882352941176,
+      "roc_auc": 0.9999697656840514,
+      "pr_auc": 0.9999101527403413
+    }
+  },
+  "train_seconds": {
+    "baseline": 5.330123499996262,
+    "cnn": 56.91997919999994
+  },
+  "detection_threshold": 0.7500000000000001,
+  "best_model": "baseline",
+  "model_thresholds": {
+    "baseline": 0.75,
+    "cnn": 0.5
+  }
+}

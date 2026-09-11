@@ -1,0 +1,8 @@
+Combination,Active Modalities,Decisive Accuracy,Recall,Precision,F1,False Positives,False Negatives,Uncertain Rate,Mean Confidence,Mean Agreement
+RADAR only,1,1.0,1.0,1.0,1.0,0,0,0.25,0.8,1.0
+VISION only,1,1.0,1.0,1.0,1.0,0,0,0.25,0.79,1.0
+RF only,1,1.0,1.0,1.0,1.0,0,0,0.125,0.8713,1.0
+RADAR + VISION,2,1.0,1.0,1.0,1.0,0,0,0.0,0.727,0.7575
+RADAR + RF,2,1.0,1.0,1.0,1.0,0,0,0.0,0.7664,0.765
+VISION + RF,2,1.0,1.0,1.0,1.0,0,0,0.125,0.7214,0.715
+RADAR + VISION + RF (Full Tri-Modal),3,1.0,1.0,1.0,1.0,0,0,0.125,0.6947,0.6669

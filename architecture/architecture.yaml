@@ -1,0 +1,57 @@
+# System Architecture Definition for Megathon 2026 Platform
+system:
+  name: "Multi-Modal Drone Detection Platform"
+  version: "1.0.0"
+  architecture_style: "Heterogeneous Sensor Evidence Fusion with Three-State Decision"
+
+components:
+  - name: "rf_pipeline"
+    path: "src/"
+    subcomponents:
+      - "preprocessing.py"
+      - "data_loader.py"
+      - "models.py"
+      - "train.py"
+      - "evaluate.py"
+      - "inference.py"
+    input: "Interleaved (I, Q) baseband signal (300 numeric features, shape 150x2)"
+    output: "RF Modality Evidence (P(Drone), Confidence, Model Label)"
+
+  - name: "vision_module"
+    path: "src/vision/"
+    subcomponents:
+      - "detector.py"
+      - "optical_validation.py"
+    input: "Optical image frames (H x W x 3)"
+    output: "Vision Modality Evidence (BBox, Confidence, Label: drone/bird/aircraft/clutter)"
+
+  - name: "radar_module"
+    path: "src/radar/"
+    subcomponents:
+      - "radar_interface.py"
+      - "radar_simulator.py"
+    input: "Airborne spatial scan & kinematic returns"
+    output: "Radar Modality Evidence (Target ID, Range, Velocity, RCS, Track History, is_simulated=True)"
+
+  - name: "fusion_engine"
+    path: "src/fusion/"
+    subcomponents:
+      - "evidence.py"
+      - "decision_engine.py"
+      - "fusion_ablation.py"
+    input: "Heterogeneous Evidence from Radar, Vision, and RF"
+    output: "Three-State Decision (DRONE / NON-DRONE / UNCERTAIN), Confidence, Agreement, Explainable Rationale"
+
+data_flows:
+  - from: "Radar Sensor"
+    to: "Fusion Engine"
+    type: "Kinematic Evidence"
+  - from: "Optical Camera"
+    to: "Fusion Engine"
+    type: "Optical Evidence"
+  - from: "RF Receiver"
+    to: "Fusion Engine"
+    type: "Electromagnetic Evidence"
+  - from: "Fusion Engine"
+    to: "Decision Interface / Display"
+    type: "Three-State Classification & Rationale"
